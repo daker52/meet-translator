@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Meet Překladač",
+  "version": "1.3.1",
+  "description": "Živý překlad Google Meet do češtiny — Web Speech API + OpenRouter",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "https://openrouter.ai/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Meet Překladač"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["lib/models.js", "content/content.js"],
+      "css": ["content/content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

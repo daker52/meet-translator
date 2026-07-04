@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="cs">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Meet Překladač</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Meet Překladač</h1>
+      <p class="subtitle">Realtime preklad pro Google Meet</p>
+
+      <label for="apiKey">OpenRouter API klíč</label>
+      <input
+        id="apiKey"
+        type="password"
+        placeholder="sk-or-v1-..."
+        autocomplete="off"
+      />
+
+      <label for="engine">Prekladovy engine</label>
+      <select id="engine">
+        <option value="auto" selected>Auto (Chrome → OpenRouter)</option>
+        <option value="chrome">Chrome on-device (nejrychlejsi)</option>
+        <option value="openrouter">OpenRouter AI (stream)</option>
+      </select>
+
+      <label for="model">AI model (OpenRouter)</label>
+      <select id="model"></select>
+
+      <div class="row">
+        <div>
+          <label for="sourceLang">Jazyk zdroje (STT / titulky)</label>
+          <select id="sourceLang">
+            <option value="en" selected>Angličtina</option>
+            <option value="de">Němčina</option>
+            <option value="es">Španělština</option>
+            <option value="fr">Francouzština</option>
+            <option value="sk">Slovenština</option>
+            <option value="cs">Čeština</option>
+          </select>
+        </div>
+        <div>
+          <label for="targetLang">Cílový jazyk</label>
+          <select id="targetLang">
+            <option value="cs" selected>Čeština</option>
+            <option value="en">Angličtina</option>
+            <option value="sk">Slovenština</option>
+            <option value="de">Němčina</option>
+          </select>
+        </div>
+      </div>
+
+      <button id="save" type="button">Uložit nastavení</button>
+      <p id="status" class="status" hidden></p>
+
+      <section class="help">
+        <h2>Jak použít</h2>
+        <ol>
+          <li>Otevřete <strong>meet.google.com</strong> a připojte se ke schůzce.</li>
+          <li>Klikněte na modré tlačítko <strong>CS</strong> vpravo dole.</li>
+          <li>Pro nejrychlejsi preklad: engine <em>Chrome on-device</em> nebo <em>Auto</em>.</li>
+          <li>Pro protistranu: titulky v Meetu (<kbd>C</kbd>) + rezim <em>Meet titulky</em>.</li>
+          <li>Pro OpenRouter vyberte rychly model (Llama 3.2 3B).</li>
+        </ol>
+      </section>
+    </main>
+    <script src="../lib/models.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
