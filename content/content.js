@@ -12,16 +12,18 @@
   };
 
   const CAPTION_REGION_LABEL =
-    /caption|titulk|sous-titre|untertitel|leyenda|subtit|字幕/i;
+    /caption|titulk|titulky|živé|zive|live|sous-titre|untertitel|leyenda|subtit|字幕/i;
   const CAPTION_LINE_SELECTORS = [
     '[data-message-text]',
     '[jsname="YSxPC"]',
+    '[jsname="tgaKEf"] > div',
     '.NWpY1d',
     '.a4cQT',
     '.iOzk7',
+    '.TBMuR',
   ];
   const LANGUAGE_DUMP_RE =
-    /(\bBETA\b|\bBeta\b|afrikánština|afrikaans|albánština|amharština|arménština|jazyk schůzky|font size|open settings|otevřít nastavení|velikost písma)/i;
+    /(\bBETA\b|\bBeta\b|afrikánština|afrikaans|albánština|amharština|arménština|jazyk schůzky|font size|open settings|otevřít nastavení|velikost písma|language of the meeting)/i;
   const OUR_ROOT_IDS = ['meet-translator-panel', 'meet-translator-live', 'meet-translator-toggle'];
 
   const DEBOUNCE_MS = 120;
@@ -42,6 +44,7 @@
   let captionRegion = null;
   let lastCaptionText = '';
   let lastSpeechText = '';
+  let lastTabAudioText = '';
   let pendingTranslate = null;
   let translateRequestId = 0;
   let streamPort = null;
@@ -58,8 +61,18 @@
   document.body.appendChild(overlay.liveBar);
   document.body.appendChild(overlay.toggleBtn);
 
+  initDraggableLiveBar();
   loadSettings();
   initStreamPort();
+
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message?.type === 'TAB_AUDIO_TRANSCRIPT' && active && mode === 'tabaudio') {
+      handleTranscript(message.text, message.final, 'tabaudio');
+    }
+    if (message?.type === 'TAB_AUDIO_ERROR' && active && mode === 'tabaudio') {
+      setStatus(`STT: ${message.error}`, 'error');
+    }
+  });
 
   chrome.storage.onChanged.addListener((changes) => {
     if (changes.sourceLang) {
@@ -82,7 +95,10 @@
         overlay.modelSelect.innerHTML = mtRenderModelOptions(settings.model);
       }
     }
-    if (active && mode === 'speech') restartSpeech();
+    if (changes.liveBarPos && overlay.liveBar) {
+      applyLiveBarPosition(changes.liveBarPos.newValue);
+    }
+    if (active && mode === 'mic') restartSpeech();
   });
 
   overlay.toggleBtn.addEventListener('click', () => {
@@ -90,8 +106,10 @@
     else start();
   });
 
-  overlay.modeSpeech.addEventListener('click', () => switchMode('speech'));
   overlay.modeCaptions.addEventListener('click', () => switchMode('captions'));
+  overlay.modeTabAudio.addEventListener('click', () => switchMode('tabaudio'));
+  overlay.modeMic.addEventListener('click', () => switchMode('mic'));
+
   overlay.modelSelect.addEventListener('change', async () => {
     settings.model = overlay.modelSelect.value;
     await chrome.storage.sync.set({ model: settings.model });
@@ -109,7 +127,8 @@
       </header>
       <div class="mt-modes">
         <button type="button" data-mode="captions" class="active">Meet titulky</button>
-        <button type="button" data-mode="speech">Web Speech</button>
+        <button type="button" data-mode="tabaudio">Zvuk schuzky</button>
+        <button type="button" data-mode="mic">Mikrofon</button>
       </div>
       <section class="mt-block mt-model-block">
         <label>AI model (OpenRouter)</label>
@@ -128,7 +147,7 @@
         <ul data-history></ul>
       </section>
       <footer class="mt-hint">
-        Realtime: zapnete titulky v Meetu (C), vyberte rychly model (Llama 3.2 3B) nebo Chrome preklad v popupu.
+        Meet titulky: zapnete titulky (C). Zvuk schuzky: zachyti audio protistrany (vyzaduje OpenRouter STT). Titulky presunete chytanim za horni listu.
       </footer>
     `;
 
@@ -136,6 +155,7 @@
     liveBar.id = 'meet-translator-live';
     liveBar.hidden = true;
     liveBar.innerHTML = `
+      <div class="mt-live-drag-handle" title="Presunout titulky">⠿</div>
       <div class="mt-live-source" data-live-source></div>
       <div class="mt-live-translation" data-live-translation></div>
     `;
@@ -161,12 +181,80 @@
       source: root.querySelector('[data-source]'),
       translation: root.querySelector('[data-translation]'),
       history: root.querySelector('[data-history]'),
-      modeSpeech: root.querySelector('[data-mode="speech"]'),
       modeCaptions: root.querySelector('[data-mode="captions"]'),
+      modeTabAudio: root.querySelector('[data-mode="tabaudio"]'),
+      modeMic: root.querySelector('[data-mode="mic"]'),
       modelSelect,
       liveSource: liveBar.querySelector('[data-live-source]'),
       liveTranslation: liveBar.querySelector('[data-live-translation]'),
+      liveHandle: liveBar.querySelector('.mt-live-drag-handle'),
     };
+  }
+
+  function initDraggableLiveBar() {
+    const bar = overlay.liveBar;
+    const handle = overlay.liveHandle;
+    let dragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+
+    chrome.storage.sync.get({ liveBarPos: null }, (data) => {
+      if (data.liveBarPos) applyLiveBarPosition(data.liveBarPos);
+      else applyLiveBarPosition({ top: '72px', left: '50%', centered: true });
+    });
+
+    handle.addEventListener('mousedown', (e) => {
+      dragging = true;
+      bar.classList.add('dragging');
+      const rect = bar.getBoundingClientRect();
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = rect.left;
+      startTop = rect.top;
+      bar.style.bottom = 'auto';
+      bar.style.transform = 'none';
+      bar.style.left = `${startLeft}px`;
+      bar.style.top = `${startTop}px`;
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const left = startLeft + e.clientX - startX;
+      const top = startTop + e.clientY - startY;
+      bar.style.left = `${Math.max(8, Math.min(left, window.innerWidth - bar.offsetWidth - 8))}px`;
+      bar.style.top = `${Math.max(8, Math.min(top, window.innerHeight - bar.offsetHeight - 8))}px`;
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      bar.classList.remove('dragging');
+      chrome.storage.sync.set({
+        liveBarPos: {
+          top: bar.style.top,
+          left: bar.style.left,
+          centered: false,
+        },
+      });
+    });
+  }
+
+  function applyLiveBarPosition(pos) {
+    const bar = overlay.liveBar;
+    if (!pos) return;
+    bar.style.bottom = 'auto';
+    if (pos.centered) {
+      bar.style.top = pos.top || '72px';
+      bar.style.left = '50%';
+      bar.style.transform = 'translateX(-50%)';
+    } else {
+      bar.style.top = pos.top || '72px';
+      bar.style.left = pos.left || '50%';
+      bar.style.transform = 'none';
+    }
   }
 
   function initStreamPort() {
@@ -264,8 +352,9 @@
   function switchMode(nextMode) {
     if (mode === nextMode) return;
     mode = nextMode;
-    overlay.modeSpeech.classList.toggle('active', mode === 'speech');
     overlay.modeCaptions.classList.toggle('active', mode === 'captions');
+    overlay.modeTabAudio.classList.toggle('active', mode === 'tabaudio');
+    overlay.modeMic.classList.toggle('active', mode === 'mic');
     resetTranslationState();
     if (active) {
       stopEngines();
@@ -278,11 +367,12 @@
     translatedDisplay = '';
     lastCaptionText = '';
     lastSpeechText = '';
+    lastTabAudioText = '';
     lastHistoryLine = '';
   }
 
   function start() {
-    if (!SpeechRecognition && mode === 'speech') {
+    if (!SpeechRecognition && mode === 'mic') {
       setStatus('Web Speech API neni podporovano.', 'error');
       overlay.root.classList.add('visible');
       return;
@@ -308,19 +398,54 @@
   }
 
   function startEngines() {
-    if (mode === 'speech') startSpeech();
+    if (mode === 'mic') startSpeech();
+    else if (mode === 'tabaudio') startTabAudioMode();
     else startCaptionWatcher();
   }
 
   function stopEngines() {
     stopSpeech();
     stopCaptionWatcher();
+    chrome.runtime.sendMessage({ type: 'STOP_TAB_CAPTURE' });
   }
 
   function restartSpeech() {
-    if (!active || mode !== 'speech') return;
+    if (!active || mode !== 'mic') return;
     stopSpeech();
     startSpeech();
+  }
+
+  async function startTabAudioMode() {
+    tryEnableMeetCaptions();
+    startCaptionWatcher();
+
+    const res = await chrome.runtime.sendMessage({
+      type: 'START_TAB_CAPTURE',
+      sourceLang: settings.sourceLang,
+    });
+
+    if (!res?.ok) {
+      setStatus(res?.error || 'Nelze zachytit zvuk schuzky.', 'error');
+      return;
+    }
+
+    setStatus('Zvuk schuzky + titulky…', 'active');
+  }
+
+  function handleTranscript(text, isFinal, source) {
+    const display = text.trim();
+    if (!display || display.length < MIN_CHARS) return;
+
+    if (source === 'tabaudio' && display === lastTabAudioText) return;
+    if (source === 'mic' && display === lastSpeechText) return;
+
+    overlay.source.textContent = display;
+    overlay.liveSource.textContent = display;
+
+    if (source === 'tabaudio') lastTabAudioText = display;
+    if (source === 'mic') lastSpeechText = display;
+
+    queueTranslate(display, { final: isFinal !== false, fullReplace: true });
   }
 
   function startSpeech() {
@@ -331,7 +456,7 @@
     recognition.interimResults = true;
     recognition.lang = SPEECH_LANG_MAP[settings.sourceLang] || 'en-US';
 
-    recognition.onstart = () => setStatus('Nasloucham…', 'active');
+    recognition.onstart = () => setStatus('Mikrofon (jen vas hlas)…', 'active');
 
     recognition.onerror = (event) => {
       if (event.error === 'not-allowed') {
@@ -344,7 +469,7 @@
     };
 
     recognition.onend = () => {
-      if (active && mode === 'speech') {
+      if (active && mode === 'mic') {
         try {
           recognition.start();
         } catch {
@@ -366,18 +491,7 @@
 
       const display = (finalText || interim).trim();
       if (!display) return;
-
-      overlay.source.textContent = display;
-      overlay.liveSource.textContent = display;
-
-      if (display === lastSpeechText) return;
-      lastSpeechText = display;
-
-      if (finalText.trim()) {
-        queueTranslate(display, { final: true, fullReplace: true });
-      } else if (display.length >= MIN_CHARS) {
-        queueTranslate(display, { final: false, fullReplace: true });
-      }
+      handleTranscript(display, Boolean(finalText.trim()), 'mic');
     };
 
     try {
@@ -398,6 +512,29 @@
     recognition = null;
   }
 
+  function walkDeep(root, visit) {
+    if (!root) return;
+    visit(root);
+    const children = root.children || root.childNodes || [];
+    Array.from(children).forEach((child) => {
+      if (child.nodeType !== 1) return;
+      walkDeep(child, visit);
+      if (child.shadowRoot) walkDeep(child.shadowRoot, visit);
+    });
+  }
+
+  function queryAllDeep(selector) {
+    const results = [];
+    walkDeep(document.body, (node) => {
+      if (node.nodeType === 1 && node.matches?.(selector)) results.push(node);
+    });
+    return results;
+  }
+
+  function cleanText(text) {
+    return (text || '').replace(/\s+/g, ' ').trim();
+  }
+
   function isOurElement(node) {
     if (!node || node.nodeType !== 1) return false;
     return OUR_ROOT_IDS.some((id) => node.id === id || node.closest(`#${id}`));
@@ -406,33 +543,67 @@
   function isUiContainer(node) {
     if (!node) return true;
     const role = (node.getAttribute('role') || '').toLowerCase();
-    if (['menu', 'listbox', 'dialog', 'option', 'combobox', 'menuitem'].includes(role)) {
+    if (['menu', 'listbox', 'dialog', 'option', 'combobox', 'menuitem', 'tooltip'].includes(role)) {
       return true;
     }
-    return Boolean(node.closest('[role="menu"], [role="listbox"], [role="dialog"], select, [jsname="EaZ7Me"]'));
+    return Boolean(
+      node.closest(
+        '[role="menu"], [role="listbox"], [role="dialog"], [role="tooltip"], select, [jsname="EaZ7Me"], [jsname="V68bde"]',
+      ),
+    );
+  }
+
+  function isInBottomArea(node) {
+    const rect = node.getBoundingClientRect();
+    if (rect.width < 20 || rect.height < 8) return false;
+    return rect.top > window.innerHeight * 0.35;
   }
 
   function isPlausibleCaptionText(text) {
-    const normalized = text.replace(/\s+/g, ' ').trim();
+    const normalized = cleanText(text);
     if (normalized.length < MIN_CHARS) return false;
-    if (normalized.length > 420) return false;
-    if (LANGUAGE_DUMP_RE.test(normalized) && normalized.length > 60) return false;
+    if (normalized.length > 320) return false;
+    if (LANGUAGE_DUMP_RE.test(normalized) && normalized.length > 50) return false;
 
     const betaCount = (normalized.match(/\bBETA\b/gi) || []).length;
-    if (betaCount >= 1 && normalized.length > 80) return false;
+    if (betaCount >= 1 && normalized.length > 60) return false;
 
     const parenCount = (normalized.match(/\([^)]{3,}\)/g) || []).length;
-    if (parenCount >= 3) return false;
+    if (parenCount >= 2) return false;
 
     if (/^(language|jazyk|langue|sprache)\b/i.test(normalized)) return false;
-    if (normalized.split(' ').length > 35) return false;
+    if (normalized.split(' ').length > 30) return false;
 
     return true;
   }
 
+  function tryEnableMeetCaptions() {
+    const selectors = [
+      '[jsname="r6bRZb"]',
+      'button[aria-label*="caption" i]',
+      'button[aria-label*="titulk" i]',
+      'button[aria-label*="titulky" i]',
+      'button[data-tooltip*="caption" i]',
+      'button[data-tooltip*="titulk" i]',
+      '[data-promo-anchor-id="captions"]',
+    ];
+
+    for (const sel of selectors) {
+      const btn = document.querySelector(sel);
+      if (!btn || isOurElement(btn)) continue;
+      const pressed = btn.getAttribute('aria-pressed');
+      if (pressed === 'false') {
+        btn.click();
+        return true;
+      }
+      if (pressed === 'true') return true;
+    }
+    return false;
+  }
+
   function findCaptionRegion() {
-    const labelledRegions = document.querySelectorAll('[role="region"][aria-label]');
-    for (const region of labelledRegions) {
+    const regions = queryAllDeep('[role="region"][aria-label]');
+    for (const region of regions) {
       if (isOurElement(region) || isUiContainer(region)) continue;
       const label = region.getAttribute('aria-label') || '';
       if (CAPTION_REGION_LABEL.test(label)) return region;
@@ -440,43 +611,82 @@
 
     const primary = document.querySelector('[jsname="tgaKEf"]');
     if (primary && !isOurElement(primary) && !isUiContainer(primary)) {
-      const sample = (primary.innerText || '').trim();
-      if (!sample || isPlausibleCaptionText(sample) || sample.length < 80) {
-        return primary;
-      }
+      return primary;
     }
 
     return null;
   }
 
+  function extractTextFromRow(row) {
+    const leafTexts = [];
+    row.querySelectorAll('span, div, p').forEach((node) => {
+      if (node.children.length > 2) return;
+      if (node.querySelector('img, button, svg')) return;
+      const t = cleanText(node.textContent);
+      if (isPlausibleCaptionText(t)) leafTexts.push(t);
+    });
+
+    if (leafTexts.length) return leafTexts[leafTexts.length - 1];
+
+    const full = cleanText(row.textContent);
+    return isPlausibleCaptionText(full) ? full : '';
+  }
+
   function extractLatestCaptionLine(region) {
     if (!region) return '';
 
-    let best = '';
+    const candidates = [];
 
     for (const selector of CAPTION_LINE_SELECTORS) {
       region.querySelectorAll(selector).forEach((node) => {
         if (isUiContainer(node)) return;
-        const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
-        if (text.length > best.length && isPlausibleCaptionText(text)) {
-          best = text;
-        }
+        const t = extractTextFromRow(node) || cleanText(node.textContent);
+        if (isPlausibleCaptionText(t)) candidates.push(t);
       });
     }
 
-    if (best) return best;
+    region.querySelectorAll(':scope > div').forEach((row) => {
+      const t = extractTextFromRow(row);
+      if (t) candidates.push(t);
+    });
 
-    const rawLines = (region.innerText || '')
+    if (candidates.length) return candidates[candidates.length - 1];
+
+    const lines = (region.innerText || '')
       .split('\n')
-      .map((line) => line.replace(/\s+/g, ' ').trim())
-      .filter(Boolean);
+      .map(cleanText)
+      .filter(isPlausibleCaptionText);
 
-    for (let i = rawLines.length - 1; i >= 0; i -= 1) {
-      const line = rawLines[i];
-      if (isPlausibleCaptionText(line)) return line;
+    return lines.length ? lines[lines.length - 1] : '';
+  }
+
+  function scrapeCaptionCandidates() {
+    const candidates = [];
+    const region = findCaptionRegion();
+
+    if (region) {
+      const line = extractLatestCaptionLine(region);
+      if (line) candidates.push(line);
     }
 
-    return '';
+    queryAllDeep('[aria-live="polite"], [aria-live="assertive"]').forEach((node) => {
+      if (isOurElement(node) || isUiContainer(node) || !isInBottomArea(node)) return;
+      const t = cleanText(node.textContent);
+      if (isPlausibleCaptionText(t)) candidates.push(t);
+    });
+
+    CAPTION_LINE_SELECTORS.forEach((selector) => {
+      queryAllDeep(selector).forEach((node) => {
+        if (isOurElement(node) || isUiContainer(node) || !isInBottomArea(node)) return;
+        const t = extractTextFromRow(node) || cleanText(node.textContent);
+        if (isPlausibleCaptionText(t)) candidates.push(t);
+      });
+    });
+
+    if (!candidates.length) return '';
+
+    const unique = [...new Set(candidates)];
+    return unique.sort((a, b) => a.length - b.length)[0] || unique[unique.length - 1];
   }
 
   function readCaptionText() {
@@ -484,7 +694,11 @@
       captionRegion = findCaptionRegion();
       bindCaptionObserver();
     }
-    return extractLatestCaptionLine(captionRegion);
+
+    const fromRegion = extractLatestCaptionLine(captionRegion);
+    if (fromRegion) return fromRegion;
+
+    return scrapeCaptionCandidates();
   }
 
   function bindCaptionObserver() {
@@ -492,16 +706,18 @@
       captionObserver.disconnect();
       captionObserver = null;
     }
-    if (!captionRegion) return;
 
+    const target = captionRegion || document.body;
     captionObserver = new MutationObserver(scanCaptions);
-    captionObserver.observe(captionRegion, {
+    captionObserver.observe(target, {
       childList: true,
       subtree: true,
       characterData: true,
     });
   }
+
   function startCaptionWatcher() {
+    tryEnableMeetCaptions();
     captionRegion = findCaptionRegion();
     bindCaptionObserver();
 
@@ -512,7 +728,10 @@
     }
 
     scanCaptions();
-    captionPollTimer = setInterval(scanCaptions, 300);
+    captionPollTimer = setInterval(() => {
+      if (!captionRegion) tryEnableMeetCaptions();
+      scanCaptions();
+    }, 280);
   }
 
   function stopCaptionWatcher() {
@@ -529,6 +748,8 @@
   }
 
   function scanCaptions() {
+    if (!active || (mode !== 'captions' && mode !== 'tabaudio')) return;
+
     const best = readCaptionText();
     if (!best || best.length < MIN_CHARS) return;
     if (best === lastCaptionText) return;

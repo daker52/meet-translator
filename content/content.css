@@ -112,8 +112,9 @@
 }
 
 #meet-translator-panel .mt-modes {
-  display: flex;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
   padding: 10px 14px;
 }
 
@@ -208,18 +209,37 @@
 #meet-translator-live {
   position: fixed;
   left: 50%;
-  bottom: 88px;
+  top: 72px;
   transform: translateX(-50%);
   z-index: 2147483645;
   width: min(920px, calc(100vw - 48px));
-  padding: 12px 18px;
+  padding: 8px 18px 12px;
   border-radius: 14px;
   background: rgba(0, 0, 0, 0.82);
   border: 1px solid rgba(255, 255, 255, 0.14);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(10px);
-  pointer-events: none;
   font-family: 'Google Sans', Roboto, Arial, sans-serif;
+}
+
+#meet-translator-live .mt-live-drag-handle {
+  text-align: center;
+  color: #9aa0a6;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 0 6px;
+  cursor: grab;
+  user-select: none;
+  pointer-events: auto;
+}
+
+#meet-translator-live.dragging .mt-live-drag-handle {
+  cursor: grabbing;
+}
+
+#meet-translator-live .mt-live-source,
+#meet-translator-live .mt-live-translation {
+  pointer-events: none;
 }
 
 #meet-translator-live .mt-live-source {

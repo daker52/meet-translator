@@ -1,10 +1,14 @@
 importScripts('../lib/models.js');
 
 const DEFAULT_MODEL = MT_FAST_MODEL;
+const STT_MODEL = 'openai/whisper-1';
 const activeStreams = new Map();
+const OFFSCREEN_URL = 'offscreen/offscreen.html';
 
 const translationCache = new Map();
 const CACHE_MAX = 400;
+
+let creatingOffscreen = null;
 
 function cacheKey(text, targetLang, model) {
   return `${model}::${targetLang}::${text.trim().toLowerCase()}`;
@@ -42,6 +46,87 @@ async function fetchCompletion(payload, apiKey, signal) {
       'X-Title': 'Meet Translator',
     },
     body: JSON.stringify(payload),
+  });
+}
+
+async function ensureOffscreen() {
+  if (await chrome.offscreen.hasDocument()) return;
+
+  if (!creatingOffscreen) {
+    creatingOffscreen = chrome.offscreen
+      .createDocument({
+        url: OFFSCREEN_URL,
+        reasons: ['USER_MEDIA'],
+        justification: 'Capture Google Meet tab audio for speech-to-text.',
+      })
+      .finally(() => {
+        creatingOffscreen = null;
+      });
+  }
+
+  await creatingOffscreen;
+}
+
+async function closeOffscreenIfIdle() {
+  if (await chrome.offscreen.hasDocument()) {
+    await chrome.offscreen.closeDocument();
+  }
+}
+
+async function startTabCapture(tabId, sourceLang) {
+  await ensureOffscreen();
+
+  const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+
+  await chrome.runtime.sendMessage({
+    target: 'offscreen',
+    type: 'START_TAB_AUDIO',
+    streamId,
+    sourceLang,
+  });
+}
+
+async function stopTabCapture() {
+  try {
+    if (await chrome.offscreen.hasDocument()) {
+      await chrome.runtime.sendMessage({ target: 'offscreen', type: 'STOP_TAB_AUDIO' });
+    }
+  } catch {
+    /* offscreen may be gone */
+  }
+  await closeOffscreenIfIdle();
+}
+
+async function transcribeTabAudio(base64, format, sourceLang, apiKey) {
+  const response = await fetch('https://openrouter.ai/api/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${sanitizeHeaderValue(apiKey)}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://meet.google.com',
+      'X-Title': 'Meet Translator',
+    },
+    body: JSON.stringify({
+      model: STT_MODEL,
+      input_audio: { data: base64, format },
+      language: sourceLang,
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`STT ${response.status}: ${err.slice(0, 120)}`);
+  }
+
+  const data = await response.json();
+  return (data?.text || data?.transcript || '').trim();
+}
+
+function broadcastToMeetTabs(message) {
+  chrome.tabs.query({ url: 'https://meet.google.com/*' }, (tabs) => {
+    tabs.forEach((tab) => {
+      if (tab.id) chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+    });
   });
 }
 
@@ -229,7 +314,45 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.target === 'offscreen') return false;
+
+  if (message?.type === 'TAB_AUDIO_CHUNK') {
+    getSettings()
+      .then(async (settings) => {
+        if (!settings.apiKey) throw new Error('Chybi OpenRouter API klic pro STT.');
+        const text = await transcribeTabAudio(
+          message.audio,
+          message.format || 'webm',
+          message.sourceLang || settings.sourceLang,
+          settings.apiKey,
+        );
+        if (text) {
+          broadcastToMeetTabs({ type: 'TAB_AUDIO_TRANSCRIPT', text, final: true });
+        }
+        sendResponse({ ok: true });
+      })
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message?.type === 'TAB_AUDIO_TRANSCRIPT' || message?.type === 'TAB_AUDIO_ERROR') {
+    broadcastToMeetTabs(message);
+    return false;
+  }
+
+  if (message?.type === 'START_TAB_CAPTURE') {
+    startTabCapture(sender.tab?.id, message.sourceLang)
+      .then(() => sendResponse({ ok: true }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message?.type === 'STOP_TAB_CAPTURE') {
+    stopTabCapture().then(() => sendResponse({ ok: true }));
+    return true;
+  }
+
   if (message?.type === 'TRANSLATE') {
     getSettings()
       .then((settings) => translateText(message.text, settings))
