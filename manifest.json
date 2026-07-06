@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Meet Překladač",
-  "version": "1.4.3",
-  "description": "Živý překlad Google Meet do češtiny — titulky, zvuk schůzky, OpenRouter",
+  "version": "1.5.0",
+  "description": "Živý překlad Google Meet do češtiny + AI Rádce — titulky, zvuk schůzky, OpenRouter",
   "permissions": ["storage", "activeTab", "tabCapture", "offscreen"],
   "host_permissions": [
     "https://meet.google.com/*",

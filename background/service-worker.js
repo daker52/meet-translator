@@ -337,8 +337,51 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
+function buildCoachPrompt() {
+  return `Jsi elitní technický poradce a komunikační kouč. Analyzuj historii konverzace z Google Meet a poraď uživateli, co má přesně říct dál. 
+Zaměř se na:
+1. Stručné a jasné odpovědi.
+2. Technickou správnost (pokud jde o IT/bezpečnost/firewally apod.).
+3. Profesionální tón.
+Odpovídej v češtině, buď velmi stručný (max 2-3 věty). Pokud se nikdo na nic neptá, jen shrň situaci nebo navrhni další krok.`;
+}
+
+async function getCoachAdvice(history, settings) {
+  if (!settings.apiKey) {
+    return { ok: false, error: 'Chybi OpenRouter API klic.' };
+  }
+
+  const payload = {
+    model: settings.model || DEFAULT_MODEL,
+    messages: [
+      { role: 'system', content: buildCoachPrompt() },
+      { role: 'user', content: `Historie konverzace:\n${history.join('\n')}\n\nCo mám říct dál?` },
+    ],
+    temperature: 0.3,
+    max_tokens: 300,
+  };
+
+  try {
+    const response = await fetchCompletion(payload, settings.apiKey);
+    if (!response.ok) {
+      const errBody = await response.text();
+      return { ok: false, error: `AI Error ${response.status}` };
+    }
+    const data = await response.json();
+    const advice = data?.choices?.[0]?.message?.content?.trim();
+    return { ok: true, advice };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.target === 'offscreen') return false;
+
+  if (message?.type === 'COACH_ADVICE') {
+    getSettings().then(settings => getCoachAdvice(message.history, settings)).then(sendResponse);
+    return true;
+  }
 
   if (message?.type === 'TAB_AUDIO_CHUNK') {
     getSettings()

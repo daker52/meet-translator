@@ -249,6 +249,103 @@
   line-height: 1.35;
 }
 
+#meet-translator-coach {
+  position: fixed;
+  left: 24px;
+  top: 120px;
+  z-index: 2147483644;
+  width: 300px;
+  display: none;
+  flex-direction: column;
+  background: rgba(32, 33, 36, 0.95);
+  color: #f1f3f4;
+  border: 1px solid #34a853;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+  font-family: 'Google Sans', Roboto, Arial, sans-serif;
+  overflow: hidden;
+}
+
+#meet-translator-coach.visible {
+  display: flex;
+}
+
+#meet-translator-coach header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(52, 168, 83, 0.2);
+  border-bottom: 1px solid rgba(52, 168, 83, 0.3);
+}
+
+#meet-translator-coach .mt-live-drag-handle {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: #81c995;
+  cursor: grab;
+}
+
+#meet-translator-coach .mt-close {
+  border: none;
+  background: transparent;
+  color: #9aa0a6;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+#meet-translator-coach .mt-coach-content {
+  padding: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+#meet-translator-coach .mt-coach-actions {
+  padding: 8px 12px 12px;
+}
+
+#meet-translator-coach .mt-coach-actions button {
+  width: 100%;
+  padding: 8px;
+  border: none;
+  border-radius: 6px;
+  background: #34a853;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#meet-translator-coach .mt-coach-actions button:hover {
+  background: #2d8e47;
+}
+
+#meet-translator-coach .mt-coach-actions button:disabled {
+  background: #5f6368;
+  cursor: not-allowed;
+}
+
+.mt-coach-toggle-btn {
+  padding: 0 14px 10px;
+}
+
+#mt-open-coach {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #34a853;
+  border-radius: 8px;
+  background: rgba(52, 168, 83, 0.1);
+  color: #81c995;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#mt-open-coach:hover {
+  background: rgba(52, 168, 83, 0.2);
+}
+
 #meet-translator-live .mt-live-translation {
   font-size: 20px;
   font-weight: 600;

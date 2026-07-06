@@ -43,6 +43,9 @@
   let lastCaptionText = '';
   let lastSpeechText = '';
   let lastTabAudioText = '';
+  let conversationHistory = [];
+  const MAX_HISTORY_LINES = 40;
+
   let pendingTranslate = null;
   let translateRequestId = 0;
   let streamPort = null;
@@ -55,11 +58,14 @@
   let currentTranslateOptions = { fullReplace: true };
 
   const overlay = createOverlay();
+  const coachOverlay = createCoachOverlay();
   document.body.appendChild(overlay.root);
   document.body.appendChild(overlay.liveBar);
   document.body.appendChild(overlay.toggleBtn);
+  document.body.appendChild(coachOverlay.root);
 
   initDraggableLiveBar();
+  initDraggableCoach();
   loadSettings();
   initStreamPort();
 
@@ -149,6 +155,9 @@
         <b>Zvuk schuzky:</b> Bere vse (vyzaduje OpenRouter Whisper).<br>
         <b>Jen muj hlas:</b> Web Speech (jen mikrofon).
       </footer>
+      <div class="mt-coach-toggle-btn">
+        <button type="button" id="mt-open-coach">💡 AI Rádce (Beta)</button>
+      </div>
     `;
 
     const liveBar = document.createElement('div');
@@ -173,6 +182,10 @@
     const modelSelect = root.querySelector('[data-model-select]');
     modelSelect.innerHTML = mtRenderModelOptions(MT_DEFAULT_MODEL);
 
+    root.querySelector('#mt-open-coach').addEventListener('click', () => {
+      coachOverlay.root.classList.toggle('visible');
+    });
+
     return {
       root,
       liveBar,
@@ -189,6 +202,122 @@
       liveTranslation: liveBar.querySelector('[data-live-translation]'),
       liveHandle: liveBar.querySelector('.mt-live-drag-handle'),
     };
+  }
+
+  function createCoachOverlay() {
+    const root = document.createElement('div');
+    root.id = 'meet-translator-coach';
+    root.innerHTML = `
+      <header>
+        <div class="mt-live-drag-handle">⠿ AI Rádce</div>
+        <button class="mt-close" type="button">×</button>
+      </header>
+      <div class="mt-coach-content">
+        <div class="mt-coach-advice" data-advice>Zatím nemám dostatek kontextu. Mluvte nebo nechte mluvit ostatní...</div>
+      </div>
+      <div class="mt-coach-actions">
+        <button type="button" data-get-advice>Získat radu teď</button>
+      </div>
+    `;
+
+    root.querySelector('.mt-close').addEventListener('click', () => {
+      root.classList.remove('visible');
+    });
+
+    return {
+      root,
+      advice: root.querySelector('[data-advice]'),
+      getAdviceBtn: root.querySelector('[data-get-advice]'),
+      handle: root.querySelector('.mt-live-drag-handle'),
+    };
+  }
+
+  function initDraggableCoach() {
+    const bar = coachOverlay.root;
+    const handle = coachOverlay.handle;
+    let dragging = false;
+    let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+    chrome.storage.sync.get({ coachPos: null }, (data) => {
+      if (data.coachPos) {
+        bar.style.top = data.coachPos.top;
+        bar.style.left = data.coachPos.left;
+        bar.style.bottom = 'auto';
+        bar.style.transform = 'none';
+      }
+    });
+
+    handle.addEventListener('mousedown', (e) => {
+      dragging = true;
+      bar.classList.add('dragging');
+      const rect = bar.getBoundingClientRect();
+      startX = e.clientX; startY = e.clientY;
+      startLeft = rect.left; startTop = rect.top;
+      bar.style.bottom = 'auto';
+      bar.style.transform = 'none';
+      bar.style.left = `${startLeft}px`;
+      bar.style.top = `${startTop}px`;
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const left = startLeft + e.clientX - startX;
+      const top = startTop + e.clientY - startY;
+      bar.style.left = `${Math.max(8, Math.min(left, window.innerWidth - bar.offsetWidth - 8))}px`;
+      bar.style.top = `${Math.max(8, Math.min(top, window.innerHeight - bar.offsetHeight - 8))}px`;
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      bar.classList.remove('dragging');
+      chrome.storage.sync.set({
+        coachPos: { top: bar.style.top, left: bar.style.left }
+      });
+    });
+
+    coachOverlay.getAdviceBtn.addEventListener('click', () => requestCoachAdvice());
+  }
+
+  async function requestCoachAdvice() {
+    if (conversationHistory.length < 1) {
+      coachOverlay.advice.textContent = "Zatím není o čem radit. Počkejte na začátek konverzace.";
+      return;
+    }
+
+    coachOverlay.advice.innerHTML = '<em>Přemýšlím...</em>';
+    coachOverlay.getAdviceBtn.disabled = true;
+
+    try {
+      const result = await chrome.runtime.sendMessage({
+        type: 'COACH_ADVICE',
+        history: conversationHistory
+      });
+
+      if (result?.ok) {
+        coachOverlay.advice.textContent = result.advice;
+      } else {
+        coachOverlay.advice.textContent = "Chyba: " + (result?.error || "Nepodařilo se získat radu.");
+      }
+    } catch (err) {
+      coachOverlay.advice.textContent = "Chyba spojení s AI.";
+    } finally {
+      coachOverlay.getAdviceBtn.disabled = false;
+    }
+  }
+
+  function addToHistory(text) {
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.length < 5) return;
+    
+    // Don't add duplicate consecutive lines
+    if (conversationHistory.length > 0 && conversationHistory[conversationHistory.length - 1] === trimmed) return;
+
+    conversationHistory.push(trimmed);
+    if (conversationHistory.length > MAX_HISTORY_LINES) {
+      conversationHistory.shift();
+    }
   }
 
   function initDraggableLiveBar() {
@@ -444,6 +573,10 @@
 
     if (source === 'tabaudio') lastTabAudioText = display;
     if (source === 'mic') lastSpeechText = display;
+
+    if (isFinal !== false) {
+      addToHistory(display);
+    }
 
     queueTranslate(display, { final: isFinal !== false, fullReplace: true });
   }
@@ -773,6 +906,7 @@
       return;
     }
 
+    addToHistory(best);
     queueTranslate(best, { final: true, fullReplace: true });
   }
 
