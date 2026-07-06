@@ -362,10 +362,18 @@ async function getCoachAdvice(history, settings) {
   };
 
   try {
-    const response = await fetchCompletion(payload, settings.apiKey);
+    let response = await fetchCompletion(payload, settings.apiKey);
+
+    if (response.status === 429) {
+      // Wait longer for coach advice as it's less time-critical than translation
+      await new Promise((r) => setTimeout(r, 1200));
+      response = await fetchCompletion(payload, settings.apiKey);
+    }
+
     if (!response.ok) {
       const errBody = await response.text();
-      return { ok: false, error: `AI Error ${response.status}` };
+      const hint = response.status === 429 ? ' (Limit free modelu - zkuste to znovu za 5-10 sekund)' : '';
+      return { ok: false, error: `AI Error ${response.status}${hint}` };
     }
     const data = await response.json();
     const advice = data?.choices?.[0]?.message?.content?.trim();
