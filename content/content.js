@@ -14,16 +14,14 @@
   const CAPTION_REGION_LABEL =
     /caption|titulk|titulky|živé|zive|live|sous-titre|untertitel|leyenda|subtit|字幕/i;
   const CAPTION_LINE_SELECTORS = [
-    '[data-message-text]',
+    '[jsname="YSxPC"] span',
     '[jsname="YSxPC"]',
-    '[jsname="tgaKEf"] > div',
-    '.NWpY1d',
+    '[data-message-text]',
     '.a4cQT',
     '.iOzk7',
-    '.TBMuR',
   ];
   const LANGUAGE_DUMP_RE =
-    /(\bBETA\b|\bBeta\b|afrikánština|afrikaans|albánština|amharština|arménština|jazyk schůzky|font size|open settings|otevřít nastavení|velikost písma|language of the meeting)/i;
+    /(\bBETA\b|\bBeta\b|afrikánština|afrikaans|albánština|amharština|arménština|jazyk schůzky|font size|open settings|otevřít nastavení|velikost písma|language of the meeting|přejít dolů|go down|skip to bottom)/i;
   const OUR_ROOT_IDS = ['meet-translator-panel', 'meet-translator-live', 'meet-translator-toggle'];
 
   const DEBOUNCE_MS = 120;
@@ -126,9 +124,9 @@
         <button class="mt-close" type="button" title="Skryt panel">×</button>
       </header>
       <div class="mt-modes">
-        <button type="button" data-mode="captions" class="active">Meet titulky</button>
-        <button type="button" data-mode="tabaudio">Zvuk schuzky</button>
-        <button type="button" data-mode="mic">Mikrofon</button>
+        <button type="button" data-mode="captions" class="active">Titulky z Meetu</button>
+        <button type="button" data-mode="tabaudio">Zvuk schuzky (vse)</button>
+        <button type="button" data-mode="mic">Jen muj hlas</button>
       </div>
       <section class="mt-block mt-model-block">
         <label>AI model (OpenRouter)</label>
@@ -147,7 +145,9 @@
         <ul data-history></ul>
       </section>
       <footer class="mt-hint">
-        Meet titulky: zapnete titulky (C). Zvuk schuzky: zachyti audio protistrany (vyzaduje OpenRouter STT). Titulky presunete chytanim za horni listu.
+        <b>Titulky z Meetu:</b> Nejlepsi pro protistranu (zapnete C).<br>
+        <b>Zvuk schuzky:</b> Bere vse (vyzaduje OpenRouter Whisper).<br>
+        <b>Jen muj hlas:</b> Web Speech (jen mikrofon).
       </footer>
     `;
 
@@ -562,8 +562,12 @@
   function isPlausibleCaptionText(text) {
     const normalized = cleanText(text);
     if (normalized.length < MIN_CHARS) return false;
-    if (normalized.length > 320) return false;
-    if (LANGUAGE_DUMP_RE.test(normalized) && normalized.length > 50) return false;
+    if (normalized.length > 400) return false;
+    if (LANGUAGE_DUMP_RE.test(normalized)) return false;
+
+    // Ignore things that look like URLs or credits
+    if (/https?:\/\/[^\s]+/.test(normalized)) return false;
+    if (/subtitles|titulky|created by|vytvořil/i.test(normalized) && normalized.length > 40) return false;
 
     const betaCount = (normalized.match(/\bBETA\b/gi) || []).length;
     if (betaCount >= 1 && normalized.length > 60) return false;
@@ -602,16 +606,18 @@
   }
 
   function findCaptionRegion() {
+    // 1. Try the most specific Google Meet selector first
+    const primary = document.querySelector('[jsname="tgaKEf"]');
+    if (primary && !isOurElement(primary) && !isUiContainer(primary)) {
+      return primary;
+    }
+
+    // 2. Fallback to aria-label regions
     const regions = queryAllDeep('[role="region"][aria-label]');
     for (const region of regions) {
       if (isOurElement(region) || isUiContainer(region)) continue;
       const label = region.getAttribute('aria-label') || '';
       if (CAPTION_REGION_LABEL.test(label)) return region;
-    }
-
-    const primary = document.querySelector('[jsname="tgaKEf"]');
-    if (primary && !isOurElement(primary) && !isUiContainer(primary)) {
-      return primary;
     }
 
     return null;
@@ -637,18 +643,21 @@
 
     const candidates = [];
 
+    // Prioritize jsname="YSxPC" which contains the actual text spans
+    region.querySelectorAll('[jsname="YSxPC"] span, [jsname="YSxPC"]').forEach((node) => {
+      const t = cleanText(node.textContent);
+      if (isPlausibleCaptionText(t)) candidates.push(t);
+    });
+
+    if (candidates.length) return candidates[candidates.length - 1];
+
     for (const selector of CAPTION_LINE_SELECTORS) {
       region.querySelectorAll(selector).forEach((node) => {
         if (isUiContainer(node)) return;
-        const t = extractTextFromRow(node) || cleanText(node.textContent);
+        const t = cleanText(node.textContent);
         if (isPlausibleCaptionText(t)) candidates.push(t);
       });
     }
-
-    region.querySelectorAll(':scope > div').forEach((row) => {
-      const t = extractTextFromRow(row);
-      if (t) candidates.push(t);
-    });
 
     if (candidates.length) return candidates[candidates.length - 1];
 
@@ -661,13 +670,19 @@
   }
 
   function scrapeCaptionCandidates() {
-    const candidates = [];
     const region = findCaptionRegion();
-
     if (region) {
-      const line = extractLatestCaptionLine(region);
-      if (line) candidates.push(line);
+      return extractLatestCaptionLine(region);
     }
+
+    const candidates = [];
+    queryAllDeep('[jsname="YSxPC"] span, [jsname="YSxPC"]').forEach((node) => {
+      if (isOurElement(node) || isUiContainer(node) || !isInBottomArea(node)) return;
+      const t = cleanText(node.textContent);
+      if (isPlausibleCaptionText(t)) candidates.push(t);
+    });
+
+    if (candidates.length) return candidates[candidates.length - 1];
 
     queryAllDeep('[aria-live="polite"], [aria-live="assertive"]').forEach((node) => {
       if (isOurElement(node) || isUiContainer(node) || !isInBottomArea(node)) return;
@@ -675,18 +690,9 @@
       if (isPlausibleCaptionText(t)) candidates.push(t);
     });
 
-    CAPTION_LINE_SELECTORS.forEach((selector) => {
-      queryAllDeep(selector).forEach((node) => {
-        if (isOurElement(node) || isUiContainer(node) || !isInBottomArea(node)) return;
-        const t = extractTextFromRow(node) || cleanText(node.textContent);
-        if (isPlausibleCaptionText(t)) candidates.push(t);
-      });
-    });
+    if (candidates.length) return candidates[candidates.length - 1];
 
-    if (!candidates.length) return '';
-
-    const unique = [...new Set(candidates)];
-    return unique.sort((a, b) => a.length - b.length)[0] || unique[unique.length - 1];
+    return '';
   }
 
   function readCaptionText() {
