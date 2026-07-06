@@ -3,6 +3,7 @@ const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
   : 'audio/webm';
 
 let mediaStream = null;
+let audioOutput = null;
 let recorder = null;
 let recordTimer = null;
 let sourceLang = 'en';
@@ -42,6 +43,11 @@ async function startTabAudio(streamId) {
     video: false,
   });
 
+  // Re-route audio to output so the user can still hear it
+  audioOutput = new Audio();
+  audioOutput.srcObject = mediaStream;
+  audioOutput.play();
+
   recorder = new MediaRecorder(mediaStream, { mimeType: mime });
 
   recorder.ondataavailable = async (event) => {
@@ -80,6 +86,12 @@ function stopTabAudio() {
   if (mediaStream) {
     mediaStream.getTracks().forEach((track) => track.stop());
     mediaStream = null;
+  }
+
+  if (audioOutput) {
+    audioOutput.pause();
+    audioOutput.srcObject = null;
+    audioOutput = null;
   }
 }
 
