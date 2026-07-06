@@ -97,6 +97,21 @@ async function stopTabCapture() {
   await closeOffscreenIfIdle();
 }
 
+const WHISPER_HALLUCINATIONS = [
+  /subtitles by/i,
+  /created by/i,
+  /titulky vytvořil/i,
+  /vytvořil/i,
+  /johnyx/i,
+  /blogspot\.com/i,
+  /hradeckesluzby\.cz/i,
+  /amara\.org/i,
+  /opensubtitles/i,
+  /thank you for watching/i,
+  /please subscribe/i,
+  /watching!/i,
+];
+
 async function transcribeTabAudio(base64, format, sourceLang, apiKey) {
   const response = await fetch('https://openrouter.ai/api/v1/audio/transcriptions', {
     method: 'POST',
@@ -110,6 +125,7 @@ async function transcribeTabAudio(base64, format, sourceLang, apiKey) {
       model: STT_MODEL,
       input_audio: { data: base64, format },
       language: sourceLang,
+      prompt: 'Real-time meeting transcription. Do not include credits or unrelated text.',
     }),
   });
 
@@ -119,7 +135,14 @@ async function transcribeTabAudio(base64, format, sourceLang, apiKey) {
   }
 
   const data = await response.json();
-  return (data?.text || data?.transcript || '').trim();
+  const text = (data?.text || data?.transcript || '').trim();
+
+  // Filter hallucinations
+  if (WHISPER_HALLUCINATIONS.some((re) => re.test(text)) && text.length < 100) {
+    return '';
+  }
+
+  return text;
 }
 
 function broadcastToMeetTabs(message) {

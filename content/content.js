@@ -21,7 +21,7 @@
     '.iOzk7',
   ];
   const LANGUAGE_DUMP_RE =
-    /(\bBETA\b|\bBeta\b|afrikánština|afrikaans|albánština|amharština|arménština|jazyk schůzky|font size|open settings|otevřít nastavení|velikost písma|language of the meeting|přejít dolů|go down|skip to bottom)/i;
+    /(\bBETA\b|\bBeta\b|afrikánština|afrikaans|albánština|amharština|arménština|jazyk schůzky|font size|open settings|otevřít nastavení|velikost písma|language of the meeting|přejít dolů|go down|skip to bottom|subtitles by|created by|titulky vytvořil|vytvořil|johnyx|blogspot\.com|hradeckesluzby\.cz|amara\.org|opensubtitles)/i;
   const OUR_ROOT_IDS = ['meet-translator-panel', 'meet-translator-live', 'meet-translator-toggle'];
 
   const DEBOUNCE_MS = 120;
